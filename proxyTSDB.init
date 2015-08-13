@@ -1,0 +1,138 @@
+#!/bin/bash
+#
+# proxyTSDB Startup script for the openTSDB proxy service
+#
+# chkconfig:	3 14 86
+# description:	proxyTSDB works as a local buffer to send metrics \
+#		between applications and openTSDB
+# processname:	proxyTSDB
+# pidfile:	/var/run/proxyTSDB.pid
+#
+### BEGIN INIT INFO
+# Provides: 		proxyTSDB
+# Required-Start: 	$local_fs $remote_fs $network $named
+# Required-Stop: 	$local_fs $remote_fs $network
+# Should-Start:
+# Should-Stop:
+# Default-Start:
+# Default-Stop:
+# Short-Description: 	start and stop proxyTSDB
+# Description:		proxyTSDB works as a local buffer to send metrics \
+#			between applications and openTSDB
+### END INIT INFO
+
+# Source function library.
+. /etc/init.d/functions
+
+EXEC="/usr/sbin/proxyTSDB"
+PROG="proxyTSDB"
+CONFIG="/etc/proxyTSDB/proxyTSDB.conf"
+
+# Source configuration file
+. $CONFIG
+
+[ -e /etc/sysconfig/$PROG ] && . /etc/sysconfig/$PROG
+
+SEND_TIME=${SEND_TIME-30}
+LOG_LEVEL=${LOG_LEVEL-INFO}
+LOG_FILE=${LOG_FILE-/var/log/proxyTSDB/proxyTSDB.log}
+PERSISTENCE_TYPE=${PERSISTENCE_TYPE-RAM}
+DISK_QUEUE_PATH=${DISK_QUEUE_PATH-/var/proxyTSDB/disk-queue-metrics}
+RAM_PERSISTENCE_MAX_SIZE=${RAM_PERSISTENCE_MAX_SIZE-512}
+DISK_PERSISTENCE_MAX_SIZE=${DISK_PERSISTENCE_MAX_SIZE-1024}
+
+LOCKFILE=/var/lock/subsys/$PROG
+PIDFILE=/var/run/${PROG}.pid
+
+OPTIONS="-D -H $TSD_HOST -P $PIDFILE"
+OPTIONS="$OPTIONS --sendperiod=$SEND_TIME"
+OPTIONS="$OPTIONS --loglevel=$LOG_LEVEL --logfile=$LOG_FILE"
+OPTIONS="$OPTIONS --buffertype=$PERSISTENCE_TYPE --rammaxsize=$RAM_PERSISTENCE_MAX_SIZE"
+if [[ "DISK" == "$PERSISTENCE_TYPE" ]] ; then
+	OPTIONS="$OPTIONS --diskmaxsize=$DISK_PERSISTENCE_MAX_SIZE --diskqueuepath=$DISK_QUEUE_PATH"
+fi
+
+which_python() {
+	for python in /usr/bin/python2.6 /usr/bin/python; do
+		test -x "$python" && echo "$python" && return
+	done
+	echo >&2 'Could not find a Python interpreter'
+	exit 1
+}
+
+PYTHON=$(which_python)
+
+start() {
+	[ -x $EXEC ] || exit 5
+	[ -f $CONFIG ] || exit 6
+	[ "" != "$TSD_HOST" ] || { echo "ERROR: TSD_HOST is not set" >&2; exit 7; }
+	echo -n $"Starting $PROG: "
+	daemon --pidfile=$PIDFILE $PYTHON $EXEC $OPTIONS
+	RETVAL=$?
+	echo
+	[ $RETVAL = 0 ] && touch $LOCKFILE
+	return $RETVAL
+}
+
+stop() {
+	echo -n $"Stopping $prog: "
+	killproc -p $PIDFILE -d 15 $EXEC
+	RETVAL=$?
+	echo
+	[ $RETVAL = 0 ] && rm -f $LOCKFILE
+	return $RETVAL
+}
+
+restart() {
+	stop
+	start
+}
+
+reload() {
+	restart
+}
+
+force_reload() {
+	restart
+}
+
+rh_status() {
+	status -p $PIDFILE $PROG
+}
+
+rh_status_q() {
+	status -p $PIDFILE $PROG >/dev/null 2>&1
+}
+
+
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart)
+		restart
+		;;
+	reload)
+		restart
+		;;
+	force-reload)
+		force_reload
+		;;
+	status)
+		rh_status
+		;;
+	condrestart|try-restart)
+		rh_status_q || exit 0
+		[ -f $LOCKFILE ] && restart || :
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
+		exit 2
+		;;
+esac
+exit $?

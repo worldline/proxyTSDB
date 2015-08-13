@@ -1,0 +1,9 @@
+/var/log/proxyTSDB/proxyTSDB.log {
+	missingok
+	rotate 5
+	compress
+	delaycompress
+	daily
+	nodateext
+	copytruncate
+}
