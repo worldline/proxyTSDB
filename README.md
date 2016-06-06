@@ -1,5 +1,5 @@
 # proxyTSDB
-`v0.1.3-2`
+`v0.1.6-3`
 
 The proxyTSDB is a local proxy to buffer metric sending between applications/tcollector plugins and openTSDB with these features :
 * Offline-buffering
@@ -7,6 +7,11 @@ The proxyTSDB is a local proxy to buffer metric sending between applications/tco
 * Generic 'gateway' (all apps / tcollector plugins send metrics to `localhost:4242`)
 
 Its goal is to improve the collect of application and host metrics and add features which don't required application update.
+
+## Requirements
+* python at least v2.6
+* dirq library (python dirq : https://pypi.python.org/pypi/dirq) 
+
 ## Configuration
 	vi /etc/proxyTSDB/proxyTSDB.conf
 
@@ -24,7 +29,7 @@ Its goal is to improve the collect of application and host metrics and add featu
 	##RAM : Metrics are buffered only in RAM
 	##DISK : Metrics are buffered in RAM and then stored to disk if openTSDB is unreachable or if the limit RAM_PERSISTENCE_MAX_SIZE is reached
 	PERSISTENCE_TYPE=DISK
-	DISK_QUEUE_PATH=/var/proxyTSDB/disk-queue-metrics
+	DISK_QUEUE_PATH=/var/spool/proxyTSDB/disk-queue-metrics
 	
 	#*_PERSISTENCE_MAX_SIZE=<integer_in_MegaByte>
 	##Max size for the RAM buffer
@@ -60,7 +65,7 @@ To send a metric to the proxy, you just need to send it to 127.0.0.1:4242:
 		* `value` : The value to record for this data point
 		* `tags` : A map of tag name/tag value pairs. At least one pair must be supplied
 * version
-	* Request for the awl-proxyTSDB version
+	* Request for the proxyTSDB version
 	* GET
 	* `api/version`
 

@@ -27,8 +27,8 @@ DEFAULT_ERR = '/var/log/proxyTSDB.err'
 LOG = logging.getLogger('proxyTSDB')
 DEFAULT_DIRQ_PATH = '/var/tmp/proxyTSDB-metrics'
 
-PROXYTSDB_VERSION = '{"version":"0.1.3","timestamp":"1437997916"}'
-METRICNAME_REGEX = r"^(sys|app|net|db)(\.([a-z])+)+$"
+PROXYTSDB_VERSION = '{"version":"","timestamp":""}'
+METRICNAME_REGEX = r"^(sys|app|net|db)(\.([-_./a-zA-Z0-9])+)+$"
 
 ALIVE = False
 METRIC_QUEUE = None
@@ -36,6 +36,9 @@ DISK_METRIC_QUEUE = None
 
 RAM_MAX_SIZE = 0
 DISK_MAX_SIZE = 0
+DISK_MAX_INODE = 0
+
+USE_IPV6 = False
 
 
 class MetricReceiver(threading.Thread):
@@ -65,8 +68,8 @@ class MetricSender(threading.Thread):
         self._diskQueue = None
         self._alive = True
         if persistentQueueFileName:
-            self._diskQueue = \
-                dirq.QueueSimple.QueueSimple(persistentQueueFileName)
+            self._diskQueue = dirq.QueueSimple.QueueSimple(
+                persistentQueueFileName, granularity=3600)
             self._diskMaxElts = persistentQueueMaxElts
 
     def run(self):
@@ -107,10 +110,14 @@ class MetricSender(threading.Thread):
                                 LOG.warning("Couldn't lock: %s" % eName)
                                 eName = self._diskQueue.next()
                                 continue
-                            metrics = marshal.loads(self._diskQueue.get(eName))
-                            for curMetric in metrics:
-                                self.sendMetric(curMetric)
-                            del metrics
+                            try:
+                                metrics = marshal.loads(
+                                    self._diskQueue.get(eName))
+                                for curMetric in metrics:
+                                    self.sendMetric(curMetric)
+                                del metrics
+                            except EOFError:
+                                pass
                             self._diskQueue.remove(eName)
                             eName = self._diskQueue.next()
 
@@ -125,13 +132,13 @@ class MetricSender(threading.Thread):
 
             # write on disk if it remains metrics in MemoryQueue
             if self._diskQueue:
+                curr_metric = None
                 while len(self._queue) > 0:
                     metrics = []
                     try:
                         if DISK_MAX_SIZE > 0 and \
-                                du(self._diskQueue.path) > (
-                                    DISK_MAX_SIZE*1024*1024
-                                ):
+                                du(self._diskQueue.path)[0] > (
+                                    DISK_MAX_SIZE*1024*1024):
                             curElt = self._diskQueue.first()
                             self._diskQueue.lock(curElt)
                             self._diskQueue.remove(curElt)
@@ -156,11 +163,13 @@ class MetricSender(threading.Thread):
 
         # Save unsent metrics from memory to disk before shutdown
         if self._diskQueue:
+            curr_metric = None
             while len(self._queue) > 0:
                 metrics = []
                 try:
                     if DISK_MAX_SIZE > 0 and \
-                            du(self._diskQueue.path) > DISK_MAX_SIZE*1024*1024:
+                            du(self._diskQueue.path)[0] > (
+                                DISK_MAX_SIZE*1024*1024):
                         curElt = self._diskQueue.first()
                         self._diskQueue.lock(curElt)
                         self._diskQueue.remove(curElt)
@@ -198,11 +207,20 @@ class MetricSender(threading.Thread):
         if self._diskQueue is not None:
             self._diskQueue.purge()
             global DISK_MAX_SIZE
-            if DISK_MAX_SIZE > 0:
-                while du(self._diskQueue.path) > DISK_MAX_SIZE*1024*1024:
+            global DISK_MAX_INODE
+            if DISK_MAX_SIZE > 0 or DISK_MAX_INODE > 0:
+                size, inode = du(self._diskQueue.path)
+                while size and inode and (
+                        (DISK_MAX_SIZE > 0 and size > DISK_MAX_SIZE*1024*1024)
+                        or (DISK_MAX_INODE > 0 and inode > DISK_MAX_INODE)
+                        ):
                     curElt = self._diskQueue.first()
                     self._diskQueue.lock(curElt)
                     self._diskQueue.remove(curElt)
+                    size = None
+                    inode = None
+                    size, inode = du(self._diskQueue.path)
+            self._diskQueue.purge()
 
     def _formatRequest(self, metric):
         raise Exception("To Be Defined")
@@ -264,6 +282,9 @@ class MetricSenderOpenTSDB(MetricSender):
 
 class MetricHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
+    def log_request(code=0,size=0):
+        pass
+
     def do_GET(self):
         if re.match(r"/api/version", self.path) is not None:
             self.do_api_version()
@@ -279,17 +300,31 @@ class MetricHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         data = self.rfile.read(length)
         in_json = json.loads(data)
         try:
-            metric = formatMetric(in_json)
-            self.server.queue.append(metric)
-            self.wfile.write('metric '+in_json['metric']+' added')
-            self.send_response(200, "metric added")
+            if type(in_json) is list:
+                metadd = 0
+                for curr in in_json :
+                    metric = formatMetric(curr)
+                    self.server.queue.append(metric)
+                    metadd += 1
+                self.send_response(200,str(metadd)+' metric(s) added')
+                self.end_headers()
+            else:
+                metric = formatMetric(in_json)
+                self.server.queue.append(metric)
+                self.send_response(200,'metric '+in_json['metric']+' added')
+                self.end_headers()
         except Exception as e:
+            LOG.warning(e.message)
             LOG.warning(e)
-            self.wfile.write('ERROR ' + e.message)
-            self.send_response(500, "Can't add metric")
+            self.send_error(500,"Can't add metric: "+e.message)
+            self.end_headers()
 
     def do_api_version(self):
         response = PROXYTSDB_VERSION
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
         self.wfile.write(response)
 
 
@@ -328,14 +363,19 @@ class MetricTelnetRequestHandler(SocketServer.BaseRequestHandler):
                             tab = tag.split("=")
                             tags[tab[0]] = tab[1]
 
-                        metric = (datas[1], datas[2], datas[3], tags)
-                        LOG.debug("ADD: "+str(metric))
-                        self.server.queue.append(metric)
+                        if not tags:
+                            LOG.warning("Metric does not have at least 1 tag : "+str(data))
+                            self.request.sendall('ERROR: Needs at least 1 tag : '+datas[1])
+                        else:
+                            metric = (datas[1], datas[2], datas[3], tags)
+                            LOG.debug("ADD: "+str(metric))
+                            self.server.queue.append(metric)
                     else:
-                        LOG.warning("Metric TRASHED invalid name : "+str(data))
-                        self.request.sendall(
-                            'ERROR: Metric name (sys|app|net|db).* : '+datas[1]
-                        )
+                        if re.match(r"^tcollector(\.([-_./a-zA-Z0-9])+)+$",datas[1]):
+                            LOG.debug("Ignoring tcollector processus itself metrics: "+str(data))
+                        else:
+                            LOG.warning("Metric TRASHED invalid name : "+str(data))
+                            self.request.sendall('ERROR: Metric name (sys|app|net|db).* : '+datas[1])
                 elif re.match(r"status", data) is not None:
                     result = "Status:\n"
                     global METRIC_QUEUE
@@ -367,7 +407,11 @@ class MetricServer(SocketServer.TCPServer):
                  queue, bind_and_activate=True):
         self.allow_reuse_address = True
         try:
-            self.address_family = socket.AF_INET6
+            global USE_IPV6
+            if USE_IPV6:
+                self.address_family = socket.AF_INET6
+            else:
+                self.address_family = socket.AF_INET
         except AttributeError:
             self.address_family = socket.AF_INET
 
@@ -430,11 +474,12 @@ def formatMetric(jsonMetric):
     try:
         jsonMetric['metric']
         jsonMetric['timestamp']
-        jsonMetric['value']
+        float(jsonMetric['value'])
+        jsonMetric['tags']
     except (TypeError, KeyError):
         LOG.warning("Parse JSON metric")
         raise Exception(
-            "Incomplete metric : {'metric': '*', 'timestamp': *, 'value': *}"
+            "Incomplete metric : {'metric': '*', 'timestamp': *, 'value': *, 'tags':{'tag1':'value1,*}}"
         )
 
     if not re.match(METRICNAME_REGEX, jsonMetric['metric']):
@@ -442,20 +487,27 @@ def formatMetric(jsonMetric):
         raise Exception("Metric name (sys|app|net|db).* : " +
                         jsonMetric['metric'])
 
+    if not jsonMetric['tags']:
+        LOG.warning("'tags' field is empty : "+jsonMetric['metric'])
+        raise Exception("'tags' field is empty : "+jsonMetric['metric'])
+
     return (jsonMetric['metric'], jsonMetric['timestamp'], jsonMetric['value'],
             jsonMetric['tags'])
 
 
 def du(path):
     size = 0
+    nbinode = 0
     for dirpath, dirnames, filenames in os.walk(path):
         for d in dirnames:
             dp = os.path.join(dirpath, d)
             size += os.path.getsize(dp)
+            nbinode += 1
         for f in filenames:
             fp = os.path.join(dirpath, f)
             size += os.path.getsize(fp)
-    return size
+            nbinode += 1
+    return size, nbinode
 
 
 def setup_logging(logfile=DEFAULT_LOG):
@@ -484,7 +536,7 @@ def parse_cmdline(argv):
     parser.add_option('--loglevel', dest='loglevel', type='str',
                       default='INFO',
                       help='Loglevel for output: '
-                           '<CRITICAL|ERROR|WARNING|INFO|DEBUG> default:INFO')
+                           '<CRITICAL|ERROR|WARNING|INFO|DEBUG> (default INFO)')
     parser.add_option('--logfile', dest='logfile', type='str',
                       default=DEFAULT_LOG,
                       help='Filename where logs are written to.')
@@ -498,9 +550,18 @@ def parse_cmdline(argv):
     parser.add_option('--diskmaxsize', dest='disk_max_size', type='int',
                       default=1024,
                       help='in MB (0 for unlimited)(default 1024)')
+    parser.add_option('--diskmaxinode', dest='disk_max_inode', type='int',
+                      default=190000,
+                      help='(0 for unlimited)(default 190000)')
     parser.add_option('--sendperiod', dest='sleep_time', type='int',
                       default=30,
                       help='Second to wait between sends (default 30s)')
+    parser.add_option('--listen', dest='listen_addr', type='str',
+                      default='127.0.0.1',
+                      help='Listening Addr (default 127.0.0.1)')
+    parser.add_option('--ipv6', dest='use_ipv6', action='store_true',
+                      default=False,
+                      help='Use enable ipv6 for listening (default no)')
 
     (options, args) = parser.parse_args(args=argv[1:])
     return (options, args)
@@ -577,6 +638,10 @@ def main(argv):
     RAM_MAX_SIZE = options.ram_max_size
     global DISK_MAX_SIZE
     DISK_MAX_SIZE = options.disk_max_size
+    global DISK_MAX_INODE
+    DISK_MAX_INODE = options.disk_max_inode
+    global USE_IPV6
+    USE_IPV6 = options.use_ipv6
 
     # Convert from MB to nb elements
     ram_buff_size = (options.ram_max_size * 1048576)/962
@@ -587,7 +652,8 @@ def main(argv):
     METRIC_QUEUE = metricQueue
 
     LOG.debug("Starting Receiver...")
-    server = MetricServer(('', 4242), MetricRequestHandler, metricQueue)
+    server = MetricServer((options.listen_addr, 4242),
+                          MetricRequestHandler, metricQueue)
     server_thread = threading.Thread(target=server.serve_forever)
     server_thread.start()
     LOG.info("Receiver Started!")

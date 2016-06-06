@@ -4,13 +4,21 @@ After=crond.service network.target
 
 [Service]
 Type=forking
+Environment="SEND_TIME=30"
+Environment="LOG_LEVEL=INFO"
+Environment="LOG_FILE=/var/log/proxyTSDB/proxyTSDB.log"
+Environment="PERSISTENCE_TYPE=RAM"
+Environment="RAM_PERSISTENCE_MAX_SIZE=512"
+Environment="DISK_PERSISTENCE_MAX_SIZE=1024"
+Environment="DISK_PERSISTENCE_MAX_INODE=190000"
+Environment="DISK_QUEUE_PATH=/var/spool/proxyTSDB/disk-queue-metrics"
 EnvironmentFile=/etc/proxyTSDB/proxyTSDB.conf
 PIDFile=/var/run/proxyTSDB.pid
 ExecStart=/bin/bash -c "/usr/sbin/proxyTSDB -D -H ${TSD_HOST} -P /var/run/proxyTSDB.pid \
 --sendperiod=${SEND_TIME} \
 --loglevel=${LOG_LEVEL} --logfile=${LOG_FILE} \
 --buffertype=${PERSISTENCE_TYPE} --rammaxsize=${RAM_PERSISTENCE_MAX_SIZE} \
---diskmaxsize=${DISK_PERSISTENCE_MAX_SIZE} --diskqueuepath=${DISK_QUEUE_PATH}"
+--diskmaxsize=${DISK_PERSISTENCE_MAX_SIZE} --diskmaxinode=${DISK_PERSISTENCE_MAX_INODE} --diskqueuepath=${DISK_QUEUE_PATH}"
 ExecStop=/bin/kill -TERM ${MAINPID}
 
 [Install]
