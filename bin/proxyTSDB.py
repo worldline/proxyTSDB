@@ -27,7 +27,7 @@ DEFAULT_ERR = '/var/log/proxyTSDB.err'
 LOG = logging.getLogger('proxyTSDB')
 DEFAULT_DIRQ_PATH = '/var/tmp/proxyTSDB-metrics'
 
-PROXYTSDB_VERSION = '{"version":"","timestamp":""}'
+PROXYTSDB_VERSION = '{"version":"1.7.1","timestamp":"1465809056"}'
 METRICNAME_REGEX = r"^(sys|app|net|db)(\.([-_./a-zA-Z0-9])+)+$"
 
 ALIVE = False

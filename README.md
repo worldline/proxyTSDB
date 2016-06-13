@@ -1,5 +1,5 @@
 # proxyTSDB
-`v0.1.6-3`
+`v1.7.1-2`
 
 The proxyTSDB is a local proxy to buffer metric sending between applications/tcollector plugins and openTSDB with these features :
 * Offline-buffering

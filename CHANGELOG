@@ -1,0 +1,38 @@
+1.7.1-2
+- fix(conf): set default LOG_LEVEL to WARNING in proxyTSDB.conf
+1.7.1-1
+- fix(http): HTTP API is now RFC compliant.
+1.7.0-1
+- fix(version): version API call now return value
+0.1.6-9
+- fix(http): disable reques logging
+0.1.6-8
+- add(http): can receive a table of metrics in HTTP
+- add(ipv6): option --ipv6 to enable ipv6 support
+- fix(systemd): default value in systemd file
+0.1.6-5
+- fix(diskqueue): pass EOFError when read for empty element in disk queue.
+0.1.6-4
+- fix(tags): send error if no tag provided
+0.1.6-3
+- chore(diskqueue): Update default temporary path for queueing data from /var/proxyTSDB to /var/spool/proxyTSDB
+0.1.6-2
+- Fix : du() call to du()[0]
+0.1.6-1
+- Add : Control for max inode in persistent queue directory
+0.1.5-4
+- Increase granularity of the dirq SimpleQueue from 60sec to 3600sec
+0.1.5-3
+- Ignoring tcollector precessus itself metrics
+0.1.5-2
+- Possibility to set the --listen option in config file
+0.1.5-1
+- Set 127.0.0.1 as listen addr per default. Add --listen option.
+- Upgrade REGEX metric check
+0.1.3-6
+- Fix HTTP return code and message
+0.1.3-4
+- Allowing numbers to be part of metric names
+0.1.3-3
+- Enhance the conf comments
+- Bind to a specific source-port range 42000 -> 43000
